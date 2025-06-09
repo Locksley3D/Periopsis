@@ -23,6 +23,8 @@ int zero_offset = 0;
 int commands[8];  
 int command_count = 0;
 
+volatile bool scanning = false;
+
 //LED Configuration
 #define LED_PIN     5      // GPIO0
 #define NUM_LEDS    22    // Total number of WS2812B LEDs
@@ -32,14 +34,15 @@ Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 void readEncoderTask(void *pvParameters) {
   const TickType_t xFrequency = pdMS_TO_TICKS(10);  // 10 ms = 100 Hz
   TickType_t xLastWakeTime = xTaskGetTickCount();
+  int loop_counter = 0;
 
   for (;;) {
-    vTaskDelayUntil(&xLastWakeTime, xFrequency); //This makes the task run at the desired frequency stated above
+    vTaskDelayUntil(&xLastWakeTime, xFrequency); // Run every 10 ms
 
-    int read = shiftIn(DATA_PIN1, CLOCK_PIN1, BIT_COUNT); //Gets the read in bits
-    int raw_angle = ((read & 0x0FFF) * 360.0) / 4096.0; //Convert bits to angle data with 12bit resolution
+    int read = shiftIn(DATA_PIN1, CLOCK_PIN1, BIT_COUNT); // Read bits
+    int raw_angle = ((read & 0x0FFF) * 360.0) / 4096.0; // 12-bit to degrees
 
-    // Adjust to zero offset captured in setup() and when clearing the encoder
+    // Adjust to zero offset
     int current_angle = raw_angle - zero_offset;
     if (current_angle < 0) current_angle += 360;
 
@@ -58,10 +61,15 @@ void readEncoderTask(void *pvParameters) {
     float output_angle = fmod((input_total_angle / 5.0), 360.0);
     if (output_angle < 0) output_angle += 360.0;
 
-    //Send to RPI
-    Serial.print("1,");
-    Serial.println(int(output_angle*10)); //*10 so no decimals are printed in the Serial bus
-
+    //Increment loop counter and print every 50 ms
+    if(scanning==true){
+      loop_counter++;
+      if (loop_counter >= 15) { // 10ms * 5 = 50ms
+        Serial1.print("1,");
+        Serial1.println(int(output_angle * 10)); // *10 to avoid decimals
+        loop_counter = 0;
+      }
+    }
   }
 }
 
@@ -69,8 +77,8 @@ void serialCommandTask(void *pvParameters) {
   String input = "";
 
   for (;;) {
-    if (Serial.available()) {
-      char c = Serial.read();//It may not seem like it but this loops until every character is in the input string ;)
+    if (Serial1.available()) {
+      char c = Serial1.read();//It may not seem like it but this loops until every character is in the input string ;)
 
       if (c == '\n') {
         // End of line: parse it
@@ -123,15 +131,16 @@ void requestHandlerTask(void *pvParameters) {
 
       switch(commands[0]){
         case 1: //Base movement
+          scanning = true;
           digitalWrite(ENABLE_PIN, LOW); //Turn the stepper motor on
 
-          //Direction
-          if(commands[1]==1)digitalWrite(DIR_PIN, LOW);
-          else if(commands[1]==2)digitalWrite(DIR_PIN, HIGH); 
+      
 
           //Half turn of full turn
           if(commands[2]==1)steps = 4000;
           else if(commands[2]==2)steps = 8000;
+
+          steps*=commands[1]; //scan cycle multiplier, multiply steps per cycle(8000) by cycle multiplier
 
           //Delay between steps
           timeDelay = commands[3];
@@ -144,6 +153,9 @@ void requestHandlerTask(void *pvParameters) {
           }
 
           digitalWrite(ENABLE_PIN, HIGH);//Turn the stepper motor off
+
+          Serial1.println("2,");//Designated the scan is done to the RPi
+
           break;
         case 2: //Zero the encoder
           zero_offset = ((shiftIn(DATA_PIN1, CLOCK_PIN1, BIT_COUNT) & 0x0FFF) * 360.0) / 4096.0;
@@ -186,6 +198,14 @@ void setup() {
 
 
   Serial.begin(115200);
+  delay(50);
+
+  Serial1.setTX(0); // GPIO0
+  Serial1.setRX(1); // GPIO1
+
+  // Start UART0
+  Serial1.begin(115200);
+
   delay(50);
 
   strip.begin();           // Initialize NeoPixel
