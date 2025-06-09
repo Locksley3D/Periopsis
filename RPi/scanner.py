@@ -39,7 +39,7 @@ def main():
     ser.write("3,0,255,0,\n".encode('utf-8'))  # Green LEDs
     sleep(0.25)
     ser.write(("1," + cycle_multiplier + "," + scan_type + "," + step_interval + ",\n").encode('utf-8'))  # Start scan
-    print("Starting 3D scan with sweep type "+scan_type+", "+step_interval+" ms between steps and " + cycle_multiplier +"scan cycles")
+    print("Starting 3D scan with sweep type "+scan_type+", "+step_interval+" ms between steps and " + cycle_multiplier +" scan cycles")
 
     clearBuffer(ser)
 
